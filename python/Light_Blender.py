@@ -12,7 +12,7 @@ import os
 #-----------------------------
 #DEV toggle, to remove when publishing
 
-DEV_FORCE_BLOCKS = True
+DEV_FORCE_BLOCKS = False
 DEV_BLOCK_COUNT = 6 # Lower it if Non-Commercial limitations
 
 #-----------------------------
@@ -165,25 +165,52 @@ def layout_blocks(aovs, grp):
             # -----------------------------
             # Merge logic
             # -----------------------------
-            MERGE_OFFSET_Y = 80
+            MERGE_OFFSET_Y = 120
+            MERGE_X_OFFSET = -34
+            OUTPUT_OFFSET_Y = 200
+            OUTPUT_OFFSET_X = -34
 
             if i == 0:
                 previous_merge = dot_out
             else:
                 merge = nuke.nodes.Merge2(operation="plus")
-                merge.setXYpos(dot_out.xpos(), dot_out.ypos() + MERGE_OFFSET_Y)
 
-                merge.setInput(0, previous_merge)
-                merge.setInput(1, dot_out)
+                merge.setXYpos(
+                    dot_out.xpos() + MERGE_X_OFFSET,
+                    dot_out.ypos() + MERGE_OFFSET_Y
+                )
+
+                merge.setInput(0, previous_merge)  # A = accumulated
+                merge.setInput(1, dot_out)         # B = this AOV
 
                 merge.setName(f"Merge_{aov}")
                 previous_merge = merge
 
         # -----------------------------
+        # RGBA branch output dot
+        # -----------------------------
+        RGBA_OUT_OFFSET_Y = 80
+        RGBA_OUT_OFFSET_X = 34
+
+        rgba_out_dot = nuke.nodes.Dot()
+        rgba_out_dot.setInput(0, previous_merge)
+
+        rgba_out_dot.setXYpos(
+            previous_merge.xpos() + RGBA_OUT_OFFSET_X,
+            previous_merge.ypos() + RGBA_OUT_OFFSET_Y
+        )
+
+        rgba_out_dot.setName("RGBA_OUT")
+        rgba_out_dot["label"].setValue("RGBA_OUT")
+
+        # -----------------------------
         # Final output connection
         # -----------------------------
-        group_output.setInput(0, previous_merge)
-        group_output.setXYpos(previous_merge.xpos() + OUTPUT_OFFSET_X, MERGE_Y)
+        group_output.setInput(0, rgba_out_dot)
+        group_output.setXYpos(
+            rgba_out_dot.xpos() + OUTPUT_OFFSET_X,
+            rgba_out_dot.ypos() + OUTPUT_OFFSET_Y
+        )
 
 
     finally:

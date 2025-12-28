@@ -1,7 +1,8 @@
 # Light_Blender.py
 # Last modified: Dec 28, 2025
-# V 0.1.1
-# Version update, backdrops for aovs working with limited functionality
+# V 0.1.3
+# FG
+# Update: Collapsible menus for each AOV and working Mute and Solo controls
 # Light mixer tool based on modular building blocks on a different
 # py file to edit each light and then add all of the together to
 # reconstruct the beauty. Completely additive workflow.
@@ -120,6 +121,38 @@ def layout_blocks(aovs, grp):
             if not pasted_nodes:
                 raise RuntimeError("No nodes were pasted")
 
+            # --- Exposure expression linking ---
+            exposure_node = None
+            for n in pasted_nodes:
+                if n.Class() == "EXPTool" and "Exposure_RGB" in n.name():
+                    exposure_node = n
+                    break
+
+            if exposure_node:
+                knob_name = f"{aov}_exposure"
+                exposure_node["red"].setExpression(f"parent.{knob_name}")
+                exposure_node["green"].setExpression(f"parent.{knob_name}")
+                exposure_node["blue"].setExpression(f"parent.{knob_name}")
+                exposure_node["name"].setValue(f"Exposure_{aov}")
+
+            # --- Mute / Solo multiply expression linking ---
+            for n in pasted_nodes:
+                if n.Class() == "Multiply" and n.name().endswith("_RGB"):
+
+                    # Build Nuke-safe any-solo expression
+                    any_solo_expr = " || ".join(
+                        [f"parent.{other}_solo" for other in aovs]
+                    )
+
+                    gain_expr = (
+                        f"({any_solo_expr}) ? "
+                        f"(parent.{aov}_solo ? 1 : 0) : "
+                        f"(parent.{aov}_mute ? 0 : 1)"
+                    )
+
+                    n["value"].setExpression(gain_expr)
+                    n["name"].setValue(f"Multiply_{aov}")
+
             # --- STEP 1b: Find DotIn / DotOut ---
             dot_in = None
             dot_out = None
@@ -140,8 +173,12 @@ def layout_blocks(aovs, grp):
 
             # Ensure Shuffle is only driven by DotIn
             for n in pasted_nodes:
-                if n.Class() == "Shuffle":
+                if n.Class() == "Shuffle2":
                     n.setInput(0, dot_in)
+
+                    # Set input layer (RGBA_<AOV>)
+                    if "in1" in n.knobs():
+                        n["in1"].setValue(aov)
 
             # --- STEP 2: Connect FIRST block to Group Input ---
             # (Because this is the first and only block for now)
@@ -238,13 +275,82 @@ def build_from_read(grp):
             return
 
         store_aovs(grp, aovs)
+        build_light_controls_ui(grp, aovs)
         layout_blocks(aovs, grp)
+
+        # Hide build button after successful build
+        if "build" in grp.knobs():
+            grp["build"].setVisible(False)
 
         nuke.message(f"Pasted {len(aovs)} RGBA blocks.")
 
     except Exception as e:
         nuke.message(str(e))
 
+# -----------------------------
+# Build Light Controls UI
+# -----------------------------
+def build_light_controls_ui(grp, aovs, prefix="RGBA_"):
+
+    # Prevent rebuilding
+    ui_built = "_light_controls_built" in grp.knobs()
+
+    if not ui_built:
+        marker = nuke.String_Knob("_light_controls_built", "")
+        marker.setVisible(False)
+        grp.addKnob(marker)
+
+    # -----------------------------
+    # Section header (single line)
+    # -----------------------------
+    header = nuke.Text_Knob(
+        "light_controls_header",
+        "",
+        "<b>Light Controls</b>"
+    )
+    header.setFlag(nuke.STARTLINE)
+    grp.addKnob(header)
+
+    # -----------------------------
+    # One collapsible group per AOV
+    # -----------------------------
+    solo_expr_terms = []
+
+    for i, aov in enumerate(aovs):
+        clean_name = aov.replace(prefix, "", 1)
+
+        # ---- Begin collapsible group (expanded by default) ----
+        begin = nuke.Tab_Knob(
+            f"light_group_{i}",
+            clean_name,
+            1 # Expanded by default
+        )
+        grp.addKnob(begin)
+
+        # ---- Exposure ----
+        exp_knob = nuke.Double_Knob(
+            f"{aov}_exposure",
+            "Exposure"
+        )
+        exp_knob.setRange(-5, 5)
+        exp_knob.setValue(0.0)
+        grp.addKnob(exp_knob)
+
+        # ---- Mute / Solo ----
+        mute_knob = nuke.Boolean_Knob(f"{aov}_mute", "Mute")
+        solo_knob = nuke.Boolean_Knob(f"{aov}_solo", "Solo")
+
+        grp.addKnob(mute_knob)
+        grp.addKnob(solo_knob)
+
+        #solo_knob.setFlag(nuke.STARTLINE)
+
+        solo_expr_terms.append(f"{aov}_solo")
+
+        # ---- End group ----
+        end = nuke.Tab_Knob(
+            f"light_group_{i}_end", "", -1)
+        grp.addKnob(end)
 
 # -----------------------------
 # Main create() function

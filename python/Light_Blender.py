@@ -1,6 +1,7 @@
 # Light_Blender.py
-# Last modified: Dec 26, 2025
-# V 0.1.0
+# Last modified: Dec 28, 2025
+# V 0.1.1
+# Version update, backdrops for aovs working with limited functionality
 # Light mixer tool based on modular building blocks on a different
 # py file to edit each light and then add all of the together to
 # reconstruct the beauty. Completely additive workflow.
@@ -8,7 +9,17 @@
 import nuke
 import os
 
+#-----------------------------
+#DEV toggle, to remove when publishing
 
+DEV_FORCE_BLOCKS = True
+DEV_BLOCK_COUNT = 6 # Lower it if Non-Commercial limitations
+
+#-----------------------------
+
+# -----------------------------
+# Helper functions
+# -----------------------------
 def get_input_node(group):
     node = group.input(0)
     if not node:
@@ -34,52 +45,209 @@ def store_aovs(group, aov_list):
     group[knob_name].setValue(",".join(aov_list))
 
 
-def create():
-    # Create the group node
-    grp = nuke.nodes.Group(name="Light_Blender")
+# -----------------------------
+# Paste a single AOV block
+# -----------------------------
+# CHANGE THE USER NAME !!!!!! === TO ADD AN AUTOMATIC USER NAME DETECTION ===
+BLOCK_PATH = r"C:\Users\ArguruAdmin\.nuke\python\Light_Blender_BuildingBlocks\bb_rgba_default.nk"
 
-    # Enter the group context
+# -----------------------------
+# Layout multiple blocks horizontally and connect with Merge plus
+# -----------------------------
+def layout_blocks(aovs, grp):
+    """
+    Build and wire Light Blender blocks inside the group.
+    Currently NC-safe: assumes only 1 AOV.
+    """
+
     grp.begin()
-    # ---- DEV VISUAL IDENTIFICATION ----
-
-    # DEV label
-    grp["label"].setValue("DEV\nLight_Blender")
-
-    # Tile color
-    grp["tile_color"].setValue(0x265DB2FF)
-
-    # White label font
-    grp["note_font_color"].setValue(0xFFFFFFFF)
-
-
     try:
-        # Input and Output nodes
-        input_node = nuke.nodes.Input(name="Input1")
-        output_node = nuke.nodes.Output(name="Output1")
+        # --- Locate Group IO nodes ONCE ---
+        group_input = nuke.toNode("Input1")
+        group_output = nuke.toNode("Output1")
 
-        # Basic connection
-        output_node.setInput(0, input_node)
+        if not group_input or not group_output:
+            raise RuntimeError("Group Input/Output nodes not found")
 
-        # Layout
-        input_node.setXYpos(0, 0)
-        output_node.setXYpos(0, 100)
+        # -----------------------------
+        # Layout constants
+        # -----------------------------
+        PIPE_Y = -120
+        PIPE_START_X = -200
+        PIPE_SPACING = 600
+
+        BLOCK_Y = 40
+        MERGE_Y = 22
+
+        OUTPUT_OFFSET_X = 300
+
+        # Position group inputs
+        group_input.setXYpos(PIPE_START_X - 200, PIPE_Y)
+
+        # -----------------------------
+        # Build horizontal input pipe
+        # -----------------------------
+        pipe_dots = []
+        pipe_source = group_input
+
+        for i in range(len(aovs)):
+            dot = nuke.nodes.Dot()
+            dot.setInput(0, pipe_source)
+            dot.setXYpos(PIPE_START_X + i * PIPE_SPACING, PIPE_Y)
+
+            pipe_dots.append(dot)
+            pipe_source = dot
+
+        # Prepare for merge chaining
+        previous_merge = None
+
+        # --- Loop over AOVs (currently 1 due to NC limit) ---
+        for i, aov in enumerate(aovs):
+
+            # --- STEP 0: Clear selection (very important) ---
+            for n in nuke.selectedNodes():
+                n.setSelected(False)
+
+            # --- STEP 1: Paste building block ---
+            bb_path = r"C:\Users\ArguruAdmin\.nuke\python\Light_Blender_BuildingBlocks\bb_rgba_default.nk"
+            nuke.nodePaste(bb_path)
+
+            # EVERYTHING BELOW THIS LINE RELATES TO THE PASTED BLOCK
+            # =====================================================
+
+            # --- STEP 1a: Collect pasted nodes ---
+            pasted_nodes = nuke.selectedNodes()
+            if not pasted_nodes:
+                raise RuntimeError("No nodes were pasted")
+
+            # --- STEP 1b: Find DotIn / DotOut ---
+            dot_in = None
+            dot_out = None
+
+            for n in pasted_nodes:
+                if n.Class() == "Dot":
+                    if n.name().startswith("DotIn"):
+                        dot_in = n
+                    elif n.name().startswith("DotOut"):
+                        dot_out = n
+
+            if not dot_in or not dot_out:
+                raise RuntimeError("Building block missing DotIn or DotOut")
+
+            # --- Sanitize DotIn: remove any existing connections ---
+            while dot_in.inputs():
+                dot_in.setInput(0, None)
+
+            # Ensure Shuffle is only driven by DotIn
+            for n in pasted_nodes:
+                if n.Class() == "Shuffle":
+                    n.setInput(0, dot_in)
+
+            # --- STEP 2: Connect FIRST block to Group Input ---
+            # (Because this is the first and only block for now)
+            dot_in.setInput(0, pipe_dots[i])
+
+
+            # --- STEP 3: Rename block elements to match AOV ---
+            dot_in.setName(f"DotIn_{aov}")
+            dot_out.setName(f"DotOut_{aov}")
+
+            # --- STEP 4: Anchor block under its pipe dot ---
+            anchor_x = pipe_dots[i].xpos()
+            anchor_y = BLOCK_Y
+
+            dx = anchor_x - dot_in.xpos()
+            dy = anchor_y - dot_in.ypos()
+
+            for n in pasted_nodes:
+                n.setXYpos(n.xpos() + dx, n.ypos() + dy)
+
+            # -----------------------------
+            # Merge logic
+            # -----------------------------
+            MERGE_OFFSET_Y = 80
+
+            if i == 0:
+                previous_merge = dot_out
+            else:
+                merge = nuke.nodes.Merge2(operation="plus")
+                merge.setXYpos(dot_out.xpos(), dot_out.ypos() + MERGE_OFFSET_Y)
+
+                merge.setInput(0, previous_merge)
+                merge.setInput(1, dot_out)
+
+                merge.setName(f"Merge_{aov}")
+                previous_merge = merge
+
+        # -----------------------------
+        # Final output connection
+        # -----------------------------
+        group_output.setInput(0, previous_merge)
+        group_output.setXYpos(previous_merge.xpos() + OUTPUT_OFFSET_X, MERGE_Y)
+
 
     finally:
-        # Always exit the group context
+        grp.end()
+
+# -----------------------------
+# Build button callback
+# -----------------------------
+def build_from_read(grp):
+    #Sanity check next line
+    print("BUILD CALLED WITH:", grp, type(grp))
+    try:
+        input_node = get_input_node(grp)
+
+        prefix = "RGBA_"
+        aovs = extract_aovs(input_node, prefix)
+
+        # --- DEV: force multiple blocks for layout testing START ---
+        if DEV_FORCE_BLOCKS:
+            aovs = [f"RGBA_DEV_{i}" for i in range(DEV_BLOCK_COUNT)]
+        # --- DEV: force multiple blocks for layout testing END ---
+
+        if not aovs:
+            nuke.message(f"No AOVs found with prefix: {prefix}")
+            return
+
+        store_aovs(grp, aovs)
+        layout_blocks(aovs, grp)
+
+        nuke.message(f"Pasted {len(aovs)} RGBA blocks.")
+
+    except Exception as e:
+        nuke.message(str(e))
+
+
+# -----------------------------
+# Main create() function
+# -----------------------------
+def create():
+    grp = nuke.nodes.Group(name="Light_Blender")
+
+    # ---- DEV VISUALS ----
+    grp["label"].setValue("DEV\nLight_Blender")
+    grp["tile_color"].setValue(0x265DB2FF)
+    grp["note_font_color"].setValue(0xFFFFFFFF)
+
+    grp.begin()
+    try:
+        input_node = nuke.nodes.Input(name="Input1")
+        output_node = nuke.nodes.Output(name="Output1")
+        output_node.setInput(0, input_node)
+        input_node.setXYpos(0, 0)
+        output_node.setXYpos(0, 100)
+    finally:
         grp.end()
 
     # ---- USER INTERFACE ----
-
-    # Tab for clarity
     grp.addKnob(nuke.Tab_Knob("light_blender", "Light Blender"))
-
-    # Python button (placeholder logic)
+    build_btn = nuke.PyScript_Knob("build", "Build From Read")
     build_btn = nuke.PyScript_Knob(
         "build",
         "Build From Read",
-        "print('Light_Blender build button pressed')"
+        "import nuke, Light_Blender; Light_Blender.build_from_read(nuke.thisNode())"
     )
-
     grp.addKnob(build_btn)
 
     return grp

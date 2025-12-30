@@ -1,8 +1,11 @@
 # Light_Blender.py
-# Last modified: Dec 28, 2025
-# V 0.1.3
+# Last modified: Dec 30, 2025
+# V 0.1.4
 # FG
-# Update: Collapsible menus for each AOV and working Mute and Solo controls
+# Update: Knobs for each AOV color have been added and are working,
+# expressions assignments have been reworked and improved, layout
+# building also reworked to behave correctly if the backdrops change size
+# and have new Shuffle2 nodes.
 # Light mixer tool based on modular building blocks on a different
 # py file to edit each light and then add all of the together to
 # reconstruct the beauty. Completely additive workflow.
@@ -75,7 +78,7 @@ def layout_blocks(aovs, grp):
         # -----------------------------
         PIPE_Y = -120
         PIPE_START_X = -200
-        PIPE_SPACING = 600
+        PIPE_SPACING = 600 # Temp value
 
         BLOCK_Y = 40
         MERGE_Y = 22
@@ -84,6 +87,35 @@ def layout_blocks(aovs, grp):
 
         # Position group inputs
         group_input.setXYpos(PIPE_START_X - 200, PIPE_Y)
+
+        # --- Paste template block to measure ---
+        for n in nuke.selectedNodes():
+            n.setSelected(False)
+
+        before = set(nuke.allNodes())
+
+        nuke.nodePaste(BLOCK_PATH)
+        template_nodes = nuke.selectedNodes()
+
+        after = set(nuke.allNodes())
+        pasted_nodes = list(after - before)
+
+        if not template_nodes:
+            raise RuntimeError("Failed to paste template block")
+
+        # Measure full footprint (including backdrops)
+        min_x = min(n.xpos() for n in template_nodes)
+        max_x = max(n.xpos() + n.screenWidth() for n in template_nodes)
+        block_width = max_x - min_x
+
+        # Optional vertical measure if needed later
+        min_y = min(n.ypos() for n in template_nodes)
+
+        BLOCK_PADDING = 200
+        PIPE_SPACING = block_width + BLOCK_PADDING
+
+        for n in template_nodes:
+            nuke.delete(n)
 
         # -----------------------------
         # Build horizontal input pipe
@@ -109,17 +141,36 @@ def layout_blocks(aovs, grp):
             for n in nuke.selectedNodes():
                 n.setSelected(False)
 
-            # --- STEP 1: Paste building block ---
+            # --- STEP 1: Paste building block (selection-safe)---
             bb_path = r"C:\Users\ArguruAdmin\.nuke\python\Light_Blender_BuildingBlocks\bb_rgba_default.nk"
+            before = set(nuke.allNodes())
             nuke.nodePaste(bb_path)
+            after = set(nuke.allNodes())
 
             # EVERYTHING BELOW THIS LINE RELATES TO THE PASTED BLOCK
             # =====================================================
 
             # --- STEP 1a: Collect pasted nodes ---
-            pasted_nodes = nuke.selectedNodes()
+            pasted_nodes = list(after - before)
             if not pasted_nodes:
                 raise RuntimeError("No nodes were pasted")
+
+            # --- STEP 1a.5: Assign AOV to Shuffle nodes ---
+            for n in pasted_nodes:
+                if n.Class() == "Shuffle2":
+                    # Newer Nuke versions
+                    if "in1" in n.knobs():
+                        n["in1"].setValue(aov)
+                    # Older Nuke versions
+                    elif "in" in n.knobs():
+                        n["in"].setValue(aov)
+
+            # Compute block width once (after first paste)
+            if i == 0:
+                min_x = min(n.xpos() for n in pasted_nodes)
+                max_x = max(n.xpos() for n in pasted_nodes)
+                block_width = max_x - min_x
+                PIPE_SPACING = block_width + 200
 
             # --- Exposure expression linking ---
             exposure_node = None
@@ -135,26 +186,11 @@ def layout_blocks(aovs, grp):
                 exposure_node["blue"].setExpression(f"parent.{knob_name}")
                 exposure_node["name"].setValue(f"Exposure_{aov}")
 
-            # --- Mute / Solo multiply expression linking ---
-            for n in pasted_nodes:
-                if n.Class() == "Multiply" and n.name().endswith("_RGB"):
-
-                    # Build Nuke-safe any-solo expression
-                    any_solo_expr = " || ".join(
-                        [f"parent.{other}_solo" for other in aovs]
-                    )
-
-                    gain_expr = (
-                        f"({any_solo_expr}) ? "
-                        f"(parent.{aov}_solo ? 1 : 0) : "
-                        f"(parent.{aov}_mute ? 0 : 1)"
-                    )
-
-                    n["value"].setExpression(gain_expr)
-                    n["name"].setValue(f"Multiply_{aov}")
-
             # --- STEP 1b: Find DotIn / DotOut ---
-            dot_in = None
+            dot_in = next(
+                n for n in pasted_nodes
+                if n.Class() == "Dot" and n.name().startswith("DotIn")
+            )
             dot_out = None
 
             for n in pasted_nodes:
@@ -164,6 +200,14 @@ def layout_blocks(aovs, grp):
                     elif n.name().startswith("DotOut"):
                         dot_out = n
 
+            # --- Rename Multiply nodes per AOV ---
+            for n in pasted_nodes:
+                if n.Class() == "Multiply":
+                    if n.name().endswith("_OnOff"):
+                        n.setName(f"Multiply_OnOff_{aov}")
+                    elif n.name().endswith("_Color"):
+                        n.setName(f"Multiply_Color_{aov}")
+
             if not dot_in or not dot_out:
                 raise RuntimeError("Building block missing DotIn or DotOut")
 
@@ -171,17 +215,8 @@ def layout_blocks(aovs, grp):
             while dot_in.inputs():
                 dot_in.setInput(0, None)
 
-            # Ensure Shuffle is only driven by DotIn
-            for n in pasted_nodes:
-                if n.Class() == "Shuffle2":
-                    n.setInput(0, dot_in)
-
-                    # Set input layer (RGBA_<AOV>)
-                    if "in1" in n.knobs():
-                        n["in1"].setValue(aov)
-
             # --- STEP 2: Connect FIRST block to Group Input ---
-            # (Because this is the first and only block for now)
+            # Connect block input to its pipe dot
             dot_in.setInput(0, pipe_dots[i])
 
 
@@ -250,6 +285,8 @@ def layout_blocks(aovs, grp):
         )
 
 
+
+
     finally:
         grp.end()
 
@@ -262,7 +299,7 @@ def build_from_read(grp):
     try:
         input_node = get_input_node(grp)
 
-        prefix = "RGBA_"
+        prefix = grp["aov_prefix"].value()
         aovs = extract_aovs(input_node, prefix)
 
         # --- DEV: force multiple blocks for layout testing START ---
@@ -277,6 +314,7 @@ def build_from_read(grp):
         store_aovs(grp, aovs)
         build_light_controls_ui(grp, aovs)
         layout_blocks(aovs, grp)
+        assign_multiply_expressions(grp, aovs)
 
         # Hide build button after successful build
         if "build" in grp.knobs():
@@ -314,7 +352,6 @@ def build_light_controls_ui(grp, aovs, prefix="RGBA_"):
     # -----------------------------
     # One collapsible group per AOV
     # -----------------------------
-    solo_expr_terms = []
 
     for i, aov in enumerate(aovs):
         clean_name = aov.replace(prefix, "", 1)
@@ -343,14 +380,45 @@ def build_light_controls_ui(grp, aovs, prefix="RGBA_"):
         grp.addKnob(mute_knob)
         grp.addKnob(solo_knob)
 
-        #solo_knob.setFlag(nuke.STARTLINE)
-
-        solo_expr_terms.append(f"{aov}_solo")
+        # Add color knob
+        color_knob = nuke.Color_Knob(f"{aov}_color", "Color")
+        color_knob.setValue([1.0, 1.0, 1.0])
+        grp.addKnob(color_knob)
 
         # ---- End group ----
         end = nuke.Tab_Knob(
             f"light_group_{i}_end", "", -1)
         grp.addKnob(end)
+
+def assign_multiply_expressions(grp, aovs):
+    grp.begin()
+    try:
+        all_nodes = nuke.allNodes()
+
+        for aov in aovs:
+            any_solo_expr = " || ".join(
+                [f"parent.{other}_solo" for other in aovs]
+            )
+
+            gain_expr = (
+                f"({any_solo_expr}) ? "
+                f"(parent.{aov}_solo ? 1 : 0) : "
+                f"(parent.{aov}_mute ? 0 : 1)"
+            )
+
+            for n in all_nodes:
+                if n.Class() != "Multiply":
+                    continue
+
+                if n.name() == f"Multiply_OnOff_{aov}":
+                    n["value"].setExpression(gain_expr)
+
+                elif n.name() == f"Multiply_Color_{aov}":
+                    n["value"].setExpression(f"parent.{aov}_color")
+
+    finally:
+        grp.end()
+
 
 # -----------------------------
 # Main create() function
@@ -375,12 +443,16 @@ def create():
 
     # ---- USER INTERFACE ----
     grp.addKnob(nuke.Tab_Knob("light_blender", "Light Blender"))
+    prefix_knob = nuke.String_Knob("aov_prefix", "AOV Prefix")
+    prefix_knob.setValue("RGBA_")
+    grp.addKnob(prefix_knob)
     build_btn = nuke.PyScript_Knob("build", "Build From Read")
     build_btn = nuke.PyScript_Knob(
         "build",
         "Build From Read",
         "import nuke, Light_Blender; Light_Blender.build_from_read(nuke.thisNode())"
     )
+    build_btn.setFlag(nuke.STARTLINE)
     grp.addKnob(build_btn)
 
     return grp

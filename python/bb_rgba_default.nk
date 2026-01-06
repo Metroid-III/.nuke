@@ -1,0 +1,133 @@
+#! C:/Program Files/Nuke16.0v8/nuke-16.0.8.dll -nx
+version 16.0 v8
+define_window_layout_xml {<?xml version="1.0" encoding="UTF-8"?>
+<layout version="1.0">
+    <window x="0" y="0" w="2559" h="1362" screen="0">
+        <splitter orientation="1">
+            <split size="40"/>
+            <dock id="" hideTitles="1" activePageId="Toolbar.1">
+                <page id="Toolbar.1"/>
+            </dock>
+            <split size="1896" stretch="1"/>
+            <splitter orientation="2">
+                <split size="774"/>
+                <dock id="" activePageId="Viewer.1">
+                    <page id="Viewer.1"/>
+                </dock>
+                <split size="545"/>
+                <dock id="" activePageId="DAG.1" focus="true">
+                    <page id="DAG.1"/>
+                    <page id="Curve Editor.1"/>
+                    <page id="DopeSheet.1"/>
+                </dock>
+            </splitter>
+            <split size="615"/>
+            <dock id="" activePageId="Properties.1">
+                <page id="Properties.1"/>
+                <page id="uk.co.thefoundry.backgroundrenderview.1"/>
+                <page id="Scenegraph.1"/>
+            </dock>
+        </splitter>
+    </window>
+</layout>
+}
+Root {
+ inputs 0
+ name C:/Users/ArguruAdmin/.nuke/python/Light_Blender_BuildingBlocks/bb_rgba_default.nk
+ format "2048 1556 0 0 2048 1556 1 2K_Super_35(full-ap)"
+ proxy_type scale
+ proxy_format "1024 778 0 0 1024 778 1 1K_Super_35(full-ap)"
+ colorManagement OCIO
+ OCIO_config aces_1.2
+ defaultViewerLUT "OCIO LUTs"
+ workingSpaceLUT scene_linear
+ monitorLut "sRGB (ACES)"
+ monitorOutLUT "sRGB (ACES)"
+ int8Lut matte_paint
+ int16Lut texture_paint
+ logLut compositing_log
+ floatLut scene_linear
+}
+BackdropNode {
+ inputs 0
+ name BackdropRGBA
+ tile_color 0x2c7f73ff
+ label RGBA
+ note_font_size 42
+ xpos -454
+ ypos -224
+ bdwidth 639
+ bdheight 410
+}
+Dot {
+ inputs 0
+ name DotIn
+ label IN
+ xpos -296
+ ypos -184
+}
+Dot {
+ name Dot1
+ xpos -296
+ ypos -139
+}
+set Nea7c0800 [stack 0]
+Shuffle2 {
+ fromInput1 {
+  {0}
+  B
+ }
+ fromInput2 {
+  {0}
+  B
+ }
+ name Shuffle1
+ label "\[value in1]\nRGB"
+ xpos -330
+ ypos -97
+}
+EXPTool {
+ mode Stops
+ name Exposure_RGB
+ xpos -330
+ ypos 1
+}
+Multiply {
+ channels rgb
+ value {1 1 1 1}
+ name Multiply_Color
+ xpos -330
+ ypos 36
+}
+Multiply {
+ channels rgb
+ name Multiply_OnOff
+ xpos -330
+ ypos 106
+}
+Dot {
+ name DotOut
+ label OUT
+ xpos -296
+ ypos 155
+}
+push $Nea7c0800
+Dot {
+ name Dot2
+ xpos -167
+ ypos -139
+}
+Shuffle2 {
+ fromInput1 {
+  {0}
+  B
+ }
+ fromInput2 {
+  {0}
+  B
+ }
+ name Shuffle2
+ label "\[value in1]\nRGB"
+ xpos -201
+ ypos -94
+}

@@ -1,17 +1,31 @@
 # Light_Blender.py
-# Last modified: Dec 30, 2025
-# V 0.1.4
+# Last modified: Jan 06, 2026
+# V 0.1.5
 # FG
-# Update: Knobs for each AOV color have been added and are working,
-# expressions assignments have been reworked and improved, layout
-# building also reworked to behave correctly if the backdrops change size
-# and have new Shuffle2 nodes.
+# Update: Multi OS auto get USERNAME
+# 
+# 
+# 
 # Light mixer tool based on modular building blocks on a different
 # py file to edit each light and then add all of the together to
 # reconstruct the beauty. Completely additive workflow.
 
 import nuke
 import os
+
+#-----------------------------
+# Resolve user-specific paths (Multi OS)
+#-----------------------------
+
+USER_HOME = os.path.expanduser("~")
+
+BLOCK_PATH = os.path.join(
+    USER_HOME,
+    ".nuke",
+    "python",
+    "Light_Blender_BuildingBlocks",
+    "bb_rgba_default.nk"
+)
 
 #-----------------------------
 #DEV toggle, to remove when publishing
@@ -47,13 +61,6 @@ def store_aovs(group, aov_list):
         k.setVisible(False)
         group.addKnob(k)
     group[knob_name].setValue(",".join(aov_list))
-
-
-# -----------------------------
-# Paste a single AOV block
-# -----------------------------
-# CHANGE THE USER NAME !!!!!! === TO ADD AN AUTOMATIC USER NAME DETECTION ===
-BLOCK_PATH = r"C:\Users\ArguruAdmin\.nuke\python\Light_Blender_BuildingBlocks\bb_rgba_default.nk"
 
 # -----------------------------
 # Layout multiple blocks horizontally and connect with Merge plus
@@ -141,11 +148,17 @@ def layout_blocks(aovs, grp):
             for n in nuke.selectedNodes():
                 n.setSelected(False)
 
-            # --- STEP 1: Paste building block (selection-safe)---
-            bb_path = r"C:\Users\ArguruAdmin\.nuke\python\Light_Blender_BuildingBlocks\bb_rgba_default.nk"
+            # --- STEP 1: Paste building block (selection-safe) ---
+            for n in nuke.selectedNodes():
+                n.setSelected(False)
+
             before = set(nuke.allNodes())
-            nuke.nodePaste(bb_path)
+            nuke.nodePaste(BLOCK_PATH)
             after = set(nuke.allNodes())
+
+            pasted_nodes = list(after - before)
+            if not pasted_nodes:
+                raise RuntimeError("No nodes were pasted")
 
             # EVERYTHING BELOW THIS LINE RELATES TO THE PASTED BLOCK
             # =====================================================
@@ -424,10 +437,10 @@ def assign_multiply_expressions(grp, aovs):
 # Main create() function
 # -----------------------------
 def create():
-    grp = nuke.nodes.Group(name="Light_Blender")
+    grp = nuke.nodes.Group(name="Light_Mixer")
 
     # ---- DEV VISUALS ----
-    grp["label"].setValue("DEV\nLight_Blender")
+    grp["label"].setValue("DEV")
     grp["tile_color"].setValue(0x265DB2FF)
     grp["note_font_color"].setValue(0xFFFFFFFF)
 

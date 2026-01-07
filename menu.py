@@ -23,3 +23,56 @@ elif system_os == "Darwin":
 	dir = MacOSX_Dir
 else:
 	dir = None
+
+
+#=================================
+#    ==== Arguru Tools ====
+import nuke
+import sys
+
+try:
+    from importlib import reload
+except ImportError:
+    pass
+
+
+def create_light_blender():
+    import Light_Blender
+
+    # DEV ONLY: auto-reload on every invocation
+    if "Light_Blender" in sys.modules:
+        try:
+            reload(Light_Blender)
+            print("Light_Blender reloaded")
+        except Exception as e:
+            nuke.message(
+                "Failed to reload Light_Blender:\n\n{}".format(e)
+            )
+            return
+
+    Light_Blender.create()
+
+
+# -------------------------
+# Main menu
+# -------------------------
+arguru_menu = nuke.menu("Nuke").addMenu("Arguru")
+arguru_menu.addCommand(
+    "Light_Blender",
+    "create_light_blender()",
+    icon="Group.png"
+)
+
+# -------------------------
+# Tab / Nodes menu
+# -------------------------
+nodes_menu = nuke.menu("Nodes")
+
+# Optional: create Arguru category in Tab menu
+arguru_nodes = nodes_menu.addMenu("Arguru")
+
+arguru_nodes.addCommand(
+    "Light_Blender",
+    "create_light_blender()",
+    icon="Group.png"
+)

@@ -1,14 +1,14 @@
 # Light_Blender.py
-# Last modified: Jan 06, 2026
-# V 0.1.5
+# Last modified: Jan 07, 2026
+# V 0.1.6
 # FG
-# Update: Multi OS auto get USERNAME
-# 
-# 
+# Update: Added InputCrypto to create masks inside,
+# deselects everything before creating it then
+# selects itself and shows properties in the Properties tab.
 # 
 # Light mixer tool based on modular building blocks on a different
 # py file to edit each light and then add all of the together to
-# reconstruct the beauty. Completely additive workflow.
+# reconstruct the beauty for a fully ADDITIVE WORKFLOW.
 
 import nuke
 import os
@@ -94,6 +94,14 @@ def layout_blocks(aovs, grp):
 
         # Position group inputs
         group_input.setXYpos(PIPE_START_X - 200, PIPE_Y)
+
+        # Keep Input2 (crypto / mask input) safely above Input1
+        group_input2 = nuke.toNode("InputCrypto")
+        if group_input2:
+            group_input2.setXYpos(
+                group_input.xpos(),
+                group_input.ypos() - 80
+            )
 
         # --- Paste template block to measure ---
         for n in nuke.selectedNodes():
@@ -199,12 +207,13 @@ def layout_blocks(aovs, grp):
                 exposure_node["blue"].setExpression(f"parent.{knob_name}")
                 exposure_node["name"].setValue(f"Exposure_{aov}")
 
-            # --- STEP 1b: Find DotIn / DotOut ---
+            # --- STEP 1b: Find DotIn / DotOut / DotCrypto ---
             dot_in = next(
                 n for n in pasted_nodes
                 if n.Class() == "Dot" and n.name().startswith("DotIn")
             )
             dot_out = None
+            dot_crypto = None
 
             for n in pasted_nodes:
                 if n.Class() == "Dot":
@@ -212,6 +221,8 @@ def layout_blocks(aovs, grp):
                         dot_in = n
                     elif n.name().startswith("DotOut"):
                         dot_out = n
+                    elif n.name().startswith("DotCrypto"):
+                        dot_crypto = n
 
             # --- Rename Multiply nodes per AOV ---
             for n in pasted_nodes:
@@ -231,6 +242,8 @@ def layout_blocks(aovs, grp):
             # --- STEP 2: Connect FIRST block to Group Input ---
             # Connect block input to its pipe dot
             dot_in.setInput(0, pipe_dots[i])
+            # Connect DotCrypto
+            dot_crypto.setInput(0, nuke.toNode("InputCrypto"))
 
 
             # --- STEP 3: Rename block elements to match AOV ---
@@ -297,10 +310,16 @@ def layout_blocks(aovs, grp):
             rgba_out_dot.ypos() + OUTPUT_OFFSET_Y
         )
 
-
-
+        # -----------------------------
+        # Cleanup: deselect everything inside the group
+        # -----------------------------
+        for n in nuke.allNodes():
+            n.setSelected(False)
 
     finally:
+        for n in nuke.allNodes():
+            n.setSelected(False)
+
         grp.end()
 
 # -----------------------------
@@ -432,6 +451,9 @@ def assign_multiply_expressions(grp, aovs):
     finally:
         grp.end()
 
+# Deselect everything when creating the node
+for n in nuke.allNodes():
+            n.setSelected(False)
 
 # -----------------------------
 # Main create() function
@@ -446,18 +468,23 @@ def create():
 
     grp.begin()
     try:
-        input_node = nuke.nodes.Input(name="Input1")
+        input1 = nuke.nodes.Input(name="Input1")
+        input2 = nuke.nodes.Input(name="InputCrypto")
+
         output_node = nuke.nodes.Output(name="Output1")
-        output_node.setInput(0, input_node)
-        input_node.setXYpos(0, 0)
-        output_node.setXYpos(0, 100)
+        output_node.setInput(0, input1)
+
+        # Layout (simple + readable)
+        input1.setXYpos(0, 0)
+        input2.setXYpos(0, 80)
+        output_node.setXYpos(0, 180)
     finally:
         grp.end()
 
     # ---- USER INTERFACE ----
     grp.addKnob(nuke.Tab_Knob("light_blender", "Light Blender"))
     prefix_knob = nuke.String_Knob("aov_prefix", "AOV Prefix")
-    prefix_knob.setValue("RGBA_")
+    prefix_knob.setValue("Beauty_")
     grp.addKnob(prefix_knob)
     build_btn = nuke.PyScript_Knob("build", "Build From Read")
     build_btn = nuke.PyScript_Knob(
@@ -467,5 +494,11 @@ def create():
     )
     build_btn.setFlag(nuke.STARTLINE)
     grp.addKnob(build_btn)
+
+    # -----------------------------
+    # UI focus: select node and open properties
+    # -----------------------------
+    grp.setSelected(True)
+    nuke.show(grp)
 
     return grp

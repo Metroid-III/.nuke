@@ -1,10 +1,10 @@
 # Light_Blender.py
-# Last modified: Jan 07, 2026
-# V 0.1.6
+# Last modified: Jan 21, 2026
+# V 0.1.7
 # FG
-# Update: Added InputCrypto to create masks inside,
-# deselects everything before creating it then
-# selects itself and shows properties in the Properties tab.
+# Update: Mute All button, unpremult and premult included along with
+# alpha restore
+# 
 # 
 # Light mixer tool based on modular building blocks on a different
 # py file to edit each light and then add all of the together to
@@ -74,8 +74,15 @@ def layout_blocks(aovs, grp):
     grp.begin()
     try:
         # --- Locate Group IO nodes ONCE ---
-        group_input = nuke.toNode("Input1")
+        group_input = nuke.toNode("Unpremult1")
         group_output = nuke.toNode("Output1")
+        input1 = nuke.toNode("Input1")
+
+        # Keep Input1 aligned with Unpremult (visual cleanup)
+        input1.setXYpos(
+            group_input.xpos() - 100,
+            group_input.ypos()
+        )
 
         if not group_input or not group_output:
             raise RuntimeError("Group Input/Output nodes not found")
@@ -94,6 +101,12 @@ def layout_blocks(aovs, grp):
 
         # Position group inputs
         group_input.setXYpos(PIPE_START_X - 200, PIPE_Y)
+
+        # Align Input1 to Unpremult (this is the correct moment)
+        input1.setXYpos(
+            group_input.xpos() - 100,
+            group_input.ypos()
+        )
 
         # Keep Input2 (crypto / mask input) safely above Input1
         group_input2 = nuke.toNode("InputCrypto")
@@ -285,24 +298,48 @@ def layout_blocks(aovs, grp):
                 previous_merge = merge
 
         # -----------------------------
-        # RGBA branch output dot
+        # HARD reset Output1
         # -----------------------------
-        RGBA_OUT_OFFSET_Y = 80
-        RGBA_OUT_OFFSET_X = 34
-
-        rgba_out_dot = nuke.nodes.Dot()
-        rgba_out_dot.setInput(0, previous_merge)
-
-        rgba_out_dot.setXYpos(
-            previous_merge.xpos() + RGBA_OUT_OFFSET_X,
-            previous_merge.ypos() + RGBA_OUT_OFFSET_Y
-        )
-
-        rgba_out_dot.setName("RGBA_OUT")
-        rgba_out_dot["label"].setValue("RGBA_OUT")
+        group_output.setInput(0, None)
 
         # -----------------------------
-        # Final output connection
+        # Alpha source dot
+        # -----------------------------
+        input_alpha = nuke.nodes.Dot(name="Input_Alpha")
+        input_alpha.setInput(0, input1)
+        input_alpha["hide_input"].setValue(True)
+
+        # -----------------------------
+        # Copy alpha
+        # -----------------------------
+        copy_alpha = nuke.nodes.Copy(name="Alpha_Restoration")
+        copy_alpha.setInput(0, previous_merge)  # RGB
+        copy_alpha.setInput(1, input_alpha)     # Alpha
+        copy_alpha["from0"].setValue("alpha")
+        copy_alpha["to0"].setValue("alpha")
+
+        # -----------------------------
+        # Premult
+        # -----------------------------
+        premult = nuke.nodes.Premult()
+        premult.setInput(0, copy_alpha)
+
+        # -----------------------------
+        # Remove extra channels
+        # -----------------------------
+        remove = nuke.nodes.Remove()
+        remove.setInput(0, premult)
+        remove["operation"].setValue("keep")
+        remove["channels"].setValue("rgba")
+
+        # -----------------------------
+        # FINAL RGBA OUT (ONLY ONE)
+        # -----------------------------
+        rgba_out_dot = nuke.nodes.Dot(name="RGBA_OUT")
+        rgba_out_dot.setInput(0, remove)
+
+        # -----------------------------
+        # Group output
         # -----------------------------
         group_output.setInput(0, rgba_out_dot)
         group_output.setXYpos(
@@ -356,6 +393,20 @@ def build_from_read(grp):
 
     except Exception as e:
         nuke.message(str(e))
+
+# -----------------------------
+# Mute All
+# -----------------------------
+def toggle_mute_all(grp):
+    aovs = grp["_light_blender_aovs"].value().split(",")
+    if not aovs or aovs == [""]:
+        return
+
+    # Determine current state
+    any_unmuted = any(not grp[f"{aov}_mute"].value() for aov in aovs)
+
+    for aov in aovs:
+        grp[f"{aov}_mute"].setValue(1 if any_unmuted else 0)
 
 # -----------------------------
 # Build Light Controls UI
@@ -471,13 +522,17 @@ def create():
         input1 = nuke.nodes.Input(name="Input1")
         input2 = nuke.nodes.Input(name="InputCrypto")
 
-        output_node = nuke.nodes.Output(name="Output1")
-        output_node.setInput(0, input1)
+        unpremult = nuke.nodes.Unpremult(name="Unpremult1")
+        unpremult.setInput(0, input1)
 
-        # Layout (simple + readable)
+        output_node = nuke.nodes.Output(name="Output1")
+
+        # Layout
         input1.setXYpos(0, 0)
         input2.setXYpos(0, 80)
+        unpremult.setXYpos(100, 0)
         output_node.setXYpos(0, 180)
+
     finally:
         grp.end()
 
@@ -486,6 +541,15 @@ def create():
     prefix_knob = nuke.String_Knob("aov_prefix", "AOV Prefix")
     prefix_knob.setValue("Beauty_")
     grp.addKnob(prefix_knob)
+
+    # Mute All button
+    mute_all_btn = nuke.PyScript_Knob(
+        "mute_all",
+        "Mute / Unmute All",
+        "import Light_Blender; Light_Blender.toggle_mute_all(nuke.thisNode())"
+    )
+    grp.addKnob(mute_all_btn)
+
     build_btn = nuke.PyScript_Knob("build", "Build From Read")
     build_btn = nuke.PyScript_Knob(
         "build",
